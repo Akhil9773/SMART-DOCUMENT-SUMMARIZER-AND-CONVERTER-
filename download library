@@ -1,0 +1,14 @@
+Save the file in name-app.py
+Run this in Terminal:
+pip install streamlit transformers PyPDF2 python-docx reportlab torch
+
+If you face a torch installation issue-
+For some systems:
+pip install torch --extra-index-url https://download.pytorch.org/whl/cu121
+
+For CPU version:
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+After installation — Run your app-
+streamlit run app.py
+
