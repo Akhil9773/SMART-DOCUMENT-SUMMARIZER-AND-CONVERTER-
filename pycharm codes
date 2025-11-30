@@ -1,0 +1,212 @@
+import streamlit as st
+from transformers import pipeline
+import PyPDF2
+from docx import Document
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph
+from reportlab.lib.styles import getSampleStyleSheet
+import io
+
+# =============================================
+#           DARK / LIGHT MODE SETUP
+# =============================================
+if "theme" not in st.session_state:
+    st.session_state.theme = "light"
+
+theme = st.session_state.theme
+
+bg_color       = "#FFFFFF" if theme == "light" else "#0e1117"
+text_color     = "#000000" if theme == "light" else "#fafafa"
+card_bg        = "#f8f9fa" if theme == "light" else "#1e2130"
+summary_bg     = "linear-gradient(135deg, #fff3cd, #ffeaa7)" if theme == "light" else "linear-gradient(135deg, #662200, #994400)"
+summary_border = "#e74c3c" if theme == "light" else "#ff4444"
+converter_bg   = "#e8f5e8" if theme == "light" else "#1a3d1a"
+converter_border = "#2e7d32" if theme == "light" else "#00ff88"
+
+# =============================================
+#               PAGE CONFIG & CSS
+# =============================================
+st.set_page_config(page_title="Smart Tool", page_icon="✨", layout="centered", initial_sidebar_state="expanded")
+
+st.markdown(f"""
+<style>
+    .main {{
+        background-color: {bg_color};
+        color: {text_color};
+    }}
+    .stButton>button {{
+        background: linear-gradient(90deg, #4CAF50, #45a049);
+        color: white;
+        border-radius: 12px;
+        padding: 12px 28px;
+        font-weight: bold;
+        border: none;
+    }}
+    .summary-box {{
+        background: {summary_bg} !important;
+        padding: 35px !important;
+        border-radius: 20px !important;
+        border-left: 12px solid {summary_border} !important;
+        border-right: 12px solid #f1c40f !important;
+        border-top: 5px solid {summary_border} !important;
+        border-bottom: 5px solid #f1c40f !important;
+        box-shadow: 0 10px 35px rgba(231, 76, 60, 0.35) !important;
+        font-size: 17px !important;
+        line-height: 2 !important;
+        color: #000000 !important;
+        font-weight: 500 !important;
+    }}
+    .converter-box {{
+        background: {converter_bg} !important;
+        padding: 22px !important;
+        border-radius: 15px !important;
+        border-left: 8px solid {converter_border} !important;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.2) !important;
+        font-size: 16px !important;
+        font-weight: 600 !important;
+        color: #000000 !important;
+        text-align: center;
+    }}
+    /* FOOTER TEXT → PURE WHITE IN BOTH MODES */
+    .footer {{
+        text-align: center;
+        padding: 30px;
+        color: #FFFFFF !important;
+        font-size: 13px;
+        margin-top: 50px;
+    }}
+    .sidebar .sidebar-content {{background: {card_bg};}}
+</style>
+""", unsafe_allow_html=True)
+
+# =============================================
+#               SIDEBAR + THEME SWITCH
+# =============================================
+with st.sidebar:
+    st.image("https://img.icons8.com/fluency/48/000000/artificial-intelligence.png")
+    st.title("Smart Tool")
+
+    st.markdown("### Theme")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Light", use_container_width=True):
+            st.session_state.theme = "light"
+            st.rerun()
+    with col2:
+        if st.button("Dark", use_container_width=True):
+            st.session_state.theme = "dark"
+            st.rerun()
+
+    st.markdown(f"**Active → {'Light' if theme=='light' else 'Dark'} Mode**")
+    st.markdown("---")
+    summary_ratio = st.slider("Summary Length (%)", 10, 50, 25)
+
+# =============================================
+#               LOAD MODEL
+# =============================================
+@st.cache_resource
+def load_summarizer():
+    return pipeline("summarization", model="facebook/bart-large-cnn")
+summarizer = load_summarizer()
+
+# =============================================
+#               HEADER
+# =============================================
+st.title("Smart Document Summarizer + Converter")
+st.markdown("### Summarize • Convert ")
+
+tab1, tab2 = st.tabs(["Summarizer", "Document Converter"])
+
+# =============================================
+#               TAB 1: SUMMARIZER
+# =============================================
+with tab1:
+    input_method = st.radio("Input", ["Paste Text", "Upload File"], horizontal=True)
+    input_text = ""
+
+    if input_method == "Paste Text":
+        input_text = st.text_area("Paste your document", height=320)
+    else:
+        file = st.file_uploader("Upload", type=["txt","pdf","docx"])
+        if file:
+            if file.name.endswith(".txt"):
+                input_text = str(file.read(), "utf-8")
+            elif file.name.endswith(".pdf"):
+                input_text = "\n".join(p.extract_text() or "" for p in PyPDF2.PdfReader(file).pages)
+            elif file.name.endswith(".docx"):
+                input_text = "\n".join(p.text for p in Document(file).paragraphs if p.text)
+            st.success(f"Loaded {file.name}")
+
+    if st.button("Generate Summary", type="primary"):
+        if not input_text.strip():
+            st.error("Add some text!")
+        else:
+            with st.spinner("Summarizing..."):
+                words = input_text.split()
+                if len(words)>800:
+                    input_text = " ".join(words[:800])
+                    st.warning("Truncated to 800 words")
+
+                target = max(50, int(len(words)*summary_ratio/100))
+                summary = summarizer(input_text, max_length=target+60, min_length=30, do_sample=False)[0]["summary_text"]
+
+                pretty = summary.split(". ")[0].capitalize() + ".\n\n"
+                for s in summary.split(". ")[1:]:
+                    if s: pretty += f"• {s.strip().capitalize()}\n"
+
+                st.markdown("## Your Beautiful Summary")
+                st.markdown(f"<div class='summary-box'>{pretty}</div>", unsafe_allow_html=True)
+
+                c1,c2,c3 = st.columns(3)
+                with c1: st.metric("Original", len(words))
+                with c2: st.metric("Summary", len(summary.split()))
+                with c3: st.metric("Reduced", f"{100-round(len(summary.split())/len(words)*100)}%")
+
+                d1,d2 = st.columns(2)
+                with d1: st.download_button("TXT", summary, "summary.txt")
+                with d2:
+                    doc = Document(); doc.add_heading("Summary",0); doc.add_paragraph(summary)
+                    b = io.BytesIO(); doc.save(b)
+                    st.download_button("DOCX", b.getvalue(), "summary.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+
+# =============================================
+#           TAB 2: CONVERTER
+# =============================================
+with tab2:
+    st.header("Document Converter")
+    st.markdown("<div class='converter-box'>Convert any file instantly — 100% private, no upload!</div>", unsafe_allow_html=True)
+
+    file = st.file_uploader("Upload file", type=["pdf","docx","txt"], key="c")
+    if file:
+        to = st.selectbox("Convert to", ["PDF","DOCX","TXT"])
+        if st.button("Convert Now!", type="primary"):
+            with st.spinner("Converting..."):
+                data = file.read()
+                text = ""
+                if file.name.endswith(".pdf"):
+                    text = "\n".join(p.extract_text()or"" for p in PyPDF2.PdfReader(io.BytesIO(data)).pages)
+                elif file.name.endswith(".docx"):
+                    text = "\n".join(p.text for p in Document(io.BytesIO(data)).paragraphs if p.text)
+                else:
+                    text = data.decode()
+
+                out = io.BytesIO()
+                name = file.name.rsplit(".",1)[0]
+                if to=="PDF":
+                    SimpleDocTemplate(out, pagesize=letter).build([Paragraph(l.replace("\n","<br/>"), getSampleStyleSheet()["Normal"]) for l in text.split("\n") if l])
+                    mime,out_name = "application/pdf", name+".pdf"
+                elif to=="DOCX":
+                    d=Document(); d.add_heading("Converted",0)
+                    for l in text.split("\n"): d.add_paragraph(l) if l else None
+                    d.save(out); mime,out_name = "application/vnd.openxmlformats-officedocument.wordprocessingml.document", name+".docx"
+                else:
+                    out.write(text.encode()); mime,out_name = "text/plain", name+".txt"
+
+                out.seek(0)
+                st.success("Done!")
+                st.download_button(f"Download {to}", out, out_name, mime)
+
+# =============================================
+#               FOOTER — NOW PURE WHITE
+# =============================================
+st.markdown("<div class='footer'>Made with ❤️ • 100% Local • Fast, Private & Beautiful</div>", unsafe_allow_html=True)
